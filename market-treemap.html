@@ -8,28 +8,28 @@
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; color: white; overflow: hidden; font-family: "Microsoft JhengHei", sans-serif; }
         #header { 
-            height: 70px; display: flex; align-items: center; justify-content: space-between; 
+            height: 75px; display: flex; align-items: center; justify-content: space-between; 
             padding: 0 20px; background: #222; border-bottom: 1px solid #444; 
         }
         .title-group { display: flex; flex-direction: column; }
         #date-display { font-size: 1.1rem; font-weight: bold; color: #ffca28; }
+        #total-volume { font-size: 0.9rem; color: #00e5ff; margin-top: 2px; }
         
-        /* 選單樣式優化 */
         #date-selector { 
             padding: 8px 15px; background: #333; color: white; border: 1px solid #666; 
             border-radius: 4px; cursor: pointer; font-size: 14px; outline: none;
         }
         #date-selector:hover { border-color: #ffca28; }
         
-        #main { width: 100vw; height: calc(100vh - 70px); }
+        #main { width: 100vw; height: calc(100vh - 75px); }
         #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 8px; border: 1px solid #444; }
     </style>
 </head>
 <body>
     <div id="header">
         <div class="title-group">
-            <div style="font-size: 0.8rem; color: #888; margin-bottom: 4px;">台股當日表現板塊圖</div>
             <div id="date-display">正在初始化...</div>
+            <div id="total-volume">計算中...</div>
         </div>
         <div>
             <select id="date-selector">
@@ -45,29 +45,27 @@
         const chartDom = document.getElementById('main');
         const myChart = echarts.init(chartDom, 'dark');
         const dateDisplay = document.getElementById('date-display');
+        const totalVolumeDisplay = document.getElementById('total-volume');
         const loadingEl = document.getElementById('loading');
         const dateSelector = document.getElementById('date-selector');
 
         const BASE_URL = './data/STOCK_DAY_ALL/';
+        let currentTotalTradeValue = 0; // 全域變數儲存當日總成交額
 
-        // 格式化日期：將 民國(1141125) 或 西元(2026-01-29) 轉為顯示字串
         function formatDisplayDate(str) {
             if (!str) return '';
             const clean = str.replace('.json', '');
             if (clean === 'latest') return '最新資料';
-            // 如果是 2026-01-29 格式
             if (clean.includes('-')) {
                 const parts = clean.split('-');
                 return `${parseInt(parts[0]) - 1911}/${parts[1]}/${parts[2]}`;
             }
-            // 如果是 1141125 格式
             if (clean.length >= 7) {
                 return `${clean.substring(0, 3)}/${clean.substring(3, 5)}/${clean.substring(5, 7)}`;
             }
             return clean;
         }
 
-        // 核心渲染函式
         async function updateChart(fileName) {
             loadingEl.style.display = 'block';
             try {
@@ -75,35 +73,48 @@
                 if (!response.ok) throw new Error('檔案讀取失敗');
                 const rawData = await response.json();
 
+                // 1. 計算總成交額 (TradeValue)
+                currentTotalTradeValue = rawData.reduce((acc, cur) => acc + (parseFloat(cur.TradeValue) || 0), 0);
+                
+                // 更新上方顯示 (轉為億元)
+                const totalInBillion = (currentTotalTradeValue / 100000000).toLocaleString(undefined, {maximumFractionDigits: 2});
+                totalVolumeDisplay.innerText = `市場總成交值：約 ${totalInBillion} 億元`;
+
                 if (rawData.length > 0) {
                     dateDisplay.innerText = `資料日期：${formatDisplayDate(rawData[0].Date)}`;
                 }
 
+                // 2. 處理資料
                 const chartData = rawData
                     .filter(item => parseFloat(item.TradeValue) > 0)
                     .map(item => {
+                        const val = parseFloat(item.TradeValue);
                         const change = parseFloat(item.Change) || 0;
+                        const ratio = ((val / currentTotalTradeValue) * 100).toFixed(2); // 計算個股佔比
+                        
                         let color = '#999';
                         if (change > 0) color = '#ef5350';
                         else if (change < 0) color = '#26a69a';
 
                         return {
-                            name: `${item.Name}\n${item.ClosingPrice || item.Close}`,
-                            value: parseFloat(item.TradeValue),
+                            name: `${item.Name}\n${ratio}%`, // 方塊上直接顯示百分比
+                            value: val,
                             itemStyle: { color: color },
-                            raw: item
+                            raw: { ...item, ratio: ratio } // 將佔比存入 raw 供 Tooltip 使用
                         };
                     });
 
                 myChart.setOption({
                     tooltip: {
+                        trigger: 'item',
                         formatter: function (info) {
                             const d = info.data.raw;
                             return `
                                 <div style="font-weight:bold; border-bottom:1px solid #666; margin-bottom:5px; padding-bottom:5px;">${d.Name} (${d.Code})</div>
                                 成交價：${d.ClosingPrice || d.Close}<br/>
-                                漲跌額：${d.Change}<br/>
-                                成交金額：${(parseFloat(d.TradeValue) / 100000000).toFixed(2)} 億
+                                漲跌幅：<span style="color:${parseFloat(d.Change) >= 0 ? '#ff4d4f' : '#52c41a'}">${d.Change}%</span><br/>
+                                成交金額：${(parseFloat(d.TradeValue) / 100000000).toFixed(2)} 億<br/>
+                                <div style="color:#ffca28; margin-top:5px; font-weight:bold;">成交量佔比：${d.ratio}%</div>
                             `;
                         }
                     },
@@ -113,27 +124,29 @@
                         roam: false,
                         nodeClick: false,
                         breadcrumb: { show: false },
-                        label: { show: true, position: 'inside', formatter: '{b}', fontSize: 12 },
+                        label: { 
+                            show: true, 
+                            position: 'inside', 
+                            formatter: '{b}', 
+                            fontSize: 12,
+                            lineHeight: 16
+                        },
                         itemStyle: { borderColor: '#1a1a1a', borderWidth: 1, gapWidth: 1 }
                     }]
-                }, true); // 使用 true 強制清理舊圖形
+                }, true);
 
                 loadingEl.style.display = 'none';
             } catch (err) {
                 loadingEl.innerText = '錯誤: ' + err.message;
-                console.error(err);
             }
         }
 
-        // 初始化流程
         async function init() {
             try {
-                // 1. 抓取 GAS 生成的清單
                 const listRes = await fetch(`${BASE_URL}filelist.json?v=${new Date().getTime()}`);
                 if (listRes.ok) {
                     const files = await listRes.json();
-                    dateSelector.innerHTML = ''; // 清空靜態預設值
-                    
+                    dateSelector.innerHTML = '';
                     files.forEach(file => {
                         const opt = document.createElement('option');
                         opt.value = file;
@@ -142,17 +155,13 @@
                     });
                 }
             } catch (e) {
-                console.warn("無法取得 filelist.json，使用預設值");
+                console.warn("無法取得 filelist.json");
             }
-
-            // 2. 載入選單第一個項目
             updateChart(dateSelector.value);
         }
 
-        // 事件監聽
         dateSelector.addEventListener('change', (e) => updateChart(e.target.value));
         window.addEventListener('resize', () => myChart.resize());
-
         init();
     </script>
 </body>
