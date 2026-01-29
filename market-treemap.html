@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台股市場成交值比重</title>
+    <title>台股成交比重與歷史K線看板</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; color: white; overflow: hidden; font-family: "Microsoft JhengHei", sans-serif; }
+        
+        /* 頂部導航欄 */
         #header { 
             height: 75px; display: flex; align-items: center; justify-content: space-between; 
             padding: 0 20px; background: #222; border-bottom: 1px solid #444; 
@@ -21,15 +23,30 @@
         }
         #date-selector:hover { border-color: #ffca28; }
         
+        /* 主圖表區域 */
         #main { width: 100vw; height: calc(100vh - 75px); }
-        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 8px; border: 1px solid #444; }
+        
+        /* 彈窗樣式 */
+        #k-line-modal {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 90vw; height: 85vh; background: #1e1e1e; border: 1px solid #555; border-radius: 12px; 
+            z-index: 100; box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        #modal-header { padding: 15px 25px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+        #k-line-chart { width: 100%; height: calc(85vh - 75px); }
+        #close-btn { cursor: pointer; font-size: 28px; color: #888; line-height: 1; }
+        #close-btn:hover { color: #ff4d4f; }
+        
+        /* 遮罩與讀取中 */
+        #overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99; backdrop-filter: blur(3px); }
+        #loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 8px; border: 1px solid #444; display: none; }
     </style>
 </head>
 <body>
     <div id="header">
         <div class="title-group">
-            <div id="date-display">正在初始化...</div>
-            <div id="total-volume">計算中...</div>
+            <div id="date-display">正在初始化系統...</div>
+            <div id="total-volume">正在計算市場規模...</div>
         </div>
         <div>
             <select id="date-selector">
@@ -38,130 +55,212 @@
         </div>
     </div>
     
-    <div id="loading">資料載入中...</div>
+    <div id="loading-overlay">資料載入中...</div>
     <div id="main"></div>
+
+    <div id="overlay"></div>
+    <div id="k-line-modal">
+        <div id="modal-header">
+            <div id="modal-title" style="font-weight:bold; color:#ffca28; font-size: 1.2rem;"></div>
+            <div id="close-btn">&times;</div>
+        </div>
+        <div id="k-line-chart"></div>
+    </div>
 
     <script>
         const chartDom = document.getElementById('main');
         const myChart = echarts.init(chartDom, 'dark');
-        const dateDisplay = document.getElementById('date-display');
-        const totalVolumeDisplay = document.getElementById('total-volume');
-        const loadingEl = document.getElementById('loading');
-        const dateSelector = document.getElementById('date-selector');
-
+        const kChart = echarts.init(document.getElementById('k-line-chart'), 'dark');
+        
         const BASE_URL = './data/STOCK_DAY_ALL/';
-        let currentTotalTradeValue = 0; // 全域變數儲存當日總成交額
+        const GAS_URL = 'https://script.google.com/macros/s/AKfycbwHsjuZ4LfpR58OZbhsXV7fp_5lnRFdSxdU9WNFZFgNylcITMNUmG58pTE8voCqmSa1/exec'; 
 
+        let currentTotalValue = 0;
+
+        // --- 日期格式化工具 ---
         function formatDisplayDate(str) {
             if (!str) return '';
-            const clean = str.replace('.json', '');
+            const clean = str.toString().replace('.json', '');
             if (clean === 'latest') return '最新資料';
+            // 處理西元 2026-01-29 轉 民國
             if (clean.includes('-')) {
                 const parts = clean.split('-');
                 return `${parseInt(parts[0]) - 1911}/${parts[1]}/${parts[2]}`;
             }
+            // 處理民國 1150129 格式
             if (clean.length >= 7) {
                 return `${clean.substring(0, 3)}/${clean.substring(3, 5)}/${clean.substring(5, 7)}`;
             }
             return clean;
         }
 
+        // --- 點擊 Treemap 方塊顯示 K 線 ---
+        myChart.on('click', function (params) {
+            if (params.data && params.data.raw) {
+                const stock = params.data.raw;
+                showKLine(stock.Code, stock.Name);
+            }
+        });
+
+        async function showKLine(code, name) {
+            document.getElementById('overlay').style.display = 'block';
+            document.getElementById('k-line-modal').style.display = 'block';
+            document.getElementById('modal-title').innerText = `${name} (${code}) 歷史日 K 線`;
+            
+            kChart.clear();
+            kChart.showLoading({ text: '讀取中...', textColor: '#ffca28', maskColor: 'rgba(0,0,0,0)' });
+
+            try {
+                const response = await fetch(`${GAS_URL}?code=${code}`);
+                const history = await response.json();
+                
+                // 整理 K 線資料：[日期, 開, 收, 低, 高]
+                const dates = history.map(h => formatDisplayDate(h.date));
+                const values = history.map(h => [h.open, h.close, h.low, h.high]);
+
+                kChart.hideLoading();
+                renderKLine(dates, values);
+            } catch (err) {
+                console.error("GAS 讀取失敗", err);
+                kChart.showLoading({ text: '讀取歷史失敗，請檢查 GAS 部署權限', textColor: '#ff4d4f' });
+            }
+        }
+
+        function renderKLine(dates, values) {
+            const option = {
+                tooltip: { 
+                    trigger: 'axis', 
+                    axisPointer: { type: 'cross' },
+                    backgroundColor: 'rgba(50, 50, 50, 0.9)',
+                    borderColor: '#777',
+                    textStyle: { color: '#fff' }
+                },
+                grid: { left: '8%', right: '5%', bottom: '15%', top: '10%' },
+                xAxis: { 
+                    type: 'category', 
+                    data: dates, 
+                    scale: true, 
+                    boundaryGap: false,
+                    axisLine: { lineStyle: { color: '#666' } }
+                },
+                yAxis: { 
+                    type: 'value', 
+                    scale: true, 
+                    splitLine: { lineStyle: { color: '#333' } },
+                    axisLine: { lineStyle: { color: '#666' } }
+                },
+                dataZoom: [
+                    { type: 'inside', start: 70, end: 100 }, 
+                    { type: 'slider', bottom: '5%', borderColor: '#444' }
+                ],
+                series: [{
+                    name: '日K',
+                    type: 'candlestick',
+                    data: values,
+                    itemStyle: {
+                        color: '#ef5350',     // 漲 (紅)
+                        color0: '#26a69a',    // 跌 (綠)
+                        borderColor: '#ef5350',
+                        borderColor0: '#26a69a'
+                    }
+                }]
+            };
+            kChart.setOption(option, true);
+            kChart.resize();
+        }
+
+        // --- 主要 Treemap 更新邏輯 ---
         async function updateChart(fileName) {
-            loadingEl.style.display = 'block';
+            document.getElementById('loading-overlay').style.display = 'block';
             try {
                 const response = await fetch(`${BASE_URL}${fileName}?v=${new Date().getTime()}`);
-                if (!response.ok) throw new Error('檔案讀取失敗');
                 const rawData = await response.json();
-
-                // 1. 計算總成交額 (TradeValue)
-                currentTotalTradeValue = rawData.reduce((acc, cur) => acc + (parseFloat(cur.TradeValue) || 0), 0);
                 
-                // 更新上方顯示 (轉為億元)
-                const totalInBillion = (currentTotalTradeValue / 100000000).toLocaleString(undefined, {maximumFractionDigits: 2});
-                totalVolumeDisplay.innerText = `市場總成交值：約 ${totalInBillion} 億元`;
-
+                // 計算總成交值
+                currentTotalValue = rawData.reduce((acc, cur) => acc + (parseFloat(cur.TradeValue) || 0), 0);
+                const totalBillion = (currentTotalValue / 100000000).toLocaleString(undefined, {maximumFractionDigits: 2});
+                document.getElementById('total-volume').innerText = `市場總成交值：約 ${totalBillion} 億元`;
+                
                 if (rawData.length > 0) {
-                    dateDisplay.innerText = `資料日期：${formatDisplayDate(rawData[0].Date)}`;
+                    document.getElementById('date-display').innerText = `資料日期：${formatDisplayDate(rawData[0].Date)}`;
                 }
 
-                // 2. 處理資料
-                const chartData = rawData
-                    .filter(item => parseFloat(item.TradeValue) > 0)
-                    .map(item => {
-                        const val = parseFloat(item.TradeValue);
-                        const change = parseFloat(item.Change) || 0;
-                        const ratio = ((val / currentTotalTradeValue) * 100).toFixed(2); // 計算個股佔比
-                        
-                        let color = '#999';
-                        if (change > 0) color = '#ef5350';
-                        else if (change < 0) color = '#26a69a';
-
-                        return {
-                            name: `${item.Name}\n${ratio}%`, // 方塊上直接顯示百分比
-                            value: val,
-                            itemStyle: { color: color },
-                            raw: { ...item, ratio: ratio } // 將佔比存入 raw 供 Tooltip 使用
-                        };
-                    });
+                const chartData = rawData.filter(item => parseFloat(item.TradeValue) > 0).map(item => {
+                    const val = parseFloat(item.TradeValue);
+                    const ratio = ((val / currentTotalValue) * 100).toFixed(2);
+                    const change = parseFloat(item.Change) || 0;
+                    
+                    return {
+                        name: `${item.Name}\n${ratio}%`,
+                        value: val,
+                        itemStyle: { 
+                            color: change > 0 ? '#ef5350' : (change < 0 ? '#26a69a' : '#999') 
+                        },
+                        raw: { ...item, ratio }
+                    };
+                });
 
                 myChart.setOption({
+                    backgroundColor: '#1a1a1a',
                     tooltip: {
-                        trigger: 'item',
-                        formatter: function (info) {
+                        formatter: info => {
                             const d = info.data.raw;
-                            return `
-                                <div style="font-weight:bold; border-bottom:1px solid #666; margin-bottom:5px; padding-bottom:5px;">${d.Name} (${d.Code})</div>
-                                成交價：${d.ClosingPrice || d.Close}<br/>
-                                漲跌幅：<span style="color:${parseFloat(d.Change) >= 0 ? '#ff4d4f' : '#52c41a'}">${d.Change}%</span><br/>
-                                成交金額：${(parseFloat(d.TradeValue) / 100000000).toFixed(2)} 億<br/>
-                                <div style="color:#ffca28; margin-top:5px; font-weight:bold;">成交量佔比：${d.ratio}%</div>
-                            `;
+                            return `<div style="font-weight:bold; border-bottom:1px solid #666; margin-bottom:5px; padding-bottom:5px;">${d.Name} (${d.Code})</div>
+                                    成交價：${d.ClosingPrice || d.Close}<br/>
+                                    漲跌幅：<span style="color:${parseFloat(d.Change) >= 0 ? '#ff4d4f' : '#52c41a'}">${d.Change}%</span><br/>
+                                    成交佔比：<b style="color:#ffca28">${d.ratio}%</b>`;
                         }
                     },
                     series: [{
                         type: 'treemap',
                         data: chartData,
+                        breadcrumb: { show: false },
                         roam: false,
                         nodeClick: false,
-                        breadcrumb: { show: false },
-                        label: { 
-                            show: true, 
-                            position: 'inside', 
-                            formatter: '{b}', 
-                            fontSize: 12,
-                            lineHeight: 16
-                        },
+                        label: { show: true, position: 'inside', formatter: '{b}', fontSize: 12, lineHeight: 16 },
                         itemStyle: { borderColor: '#1a1a1a', borderWidth: 1, gapWidth: 1 }
                     }]
                 }, true);
-
-                loadingEl.style.display = 'none';
+                
+                document.getElementById('loading-overlay').style.display = 'none';
             } catch (err) {
-                loadingEl.innerText = '錯誤: ' + err.message;
+                console.error("更新圖表失敗", err);
+                document.getElementById('loading-overlay').innerText = "載入失敗";
             }
         }
 
+        // --- 初始化清單 ---
         async function init() {
             try {
                 const listRes = await fetch(`${BASE_URL}filelist.json?v=${new Date().getTime()}`);
                 if (listRes.ok) {
                     const files = await listRes.json();
-                    dateSelector.innerHTML = '';
+                    const selector = document.getElementById('date-selector');
+                    selector.innerHTML = '';
                     files.forEach(file => {
                         const opt = document.createElement('option');
                         opt.value = file;
                         opt.text = formatDisplayDate(file);
-                        dateSelector.appendChild(opt);
+                        selector.appendChild(opt);
                     });
                 }
-            } catch (e) {
-                console.warn("無法取得 filelist.json");
-            }
-            updateChart(dateSelector.value);
+            } catch (e) { console.warn("無法取得 filelist.json，使用預設值"); }
+            updateChart(document.getElementById('date-selector').value);
         }
 
-        dateSelector.addEventListener('change', (e) => updateChart(e.target.value));
-        window.addEventListener('resize', () => myChart.resize());
+        // --- 事件監聽 ---
+        document.getElementById('date-selector').onchange = (e) => updateChart(e.target.value);
+        
+        document.getElementById('close-btn').onclick = document.getElementById('overlay').onclick = () => {
+            document.getElementById('overlay').style.display = 'none';
+            document.getElementById('k-line-modal').style.display = 'none';
+        };
+
+        window.onresize = () => {
+            myChart.resize();
+            kChart.resize();
+        };
+
         init();
     </script>
 </body>
