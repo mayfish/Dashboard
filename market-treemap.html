@@ -15,7 +15,7 @@
         
         /* 搜尋與選單區塊 */
         .action-group { display: flex; align-items: center; gap: 10px; }
-        #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 120px; }
+        #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 150px; }
         #stock-search:focus { border-color: #00e5ff; }
         #date-selector { padding: 8px 15px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; cursor: pointer; outline: none; }
         #date-selector:hover { border-color: #ffca28; }
@@ -43,7 +43,7 @@
             <div id="total-volume">計算市場佔比中...</div>
         </div>
         <div class="action-group">
-            <input type="text" id="stock-search" placeholder="搜尋代號 (如: 2330)" maxlength="6">
+            <input type="text" id="stock-search" placeholder="搜尋代號或名稱" maxlength="10">
             <select id="date-selector"><option value="latest.json">最新資料</option></select>
         </div>
     </div>
@@ -67,43 +67,41 @@
         const BASE_URL = './data/STOCK_DAY_ALL/';
         const GAS_URL = 'https://script.google.com/macros/s/AKfycbxOQ5-B8JFmkTSZ1SwcUaEzikem-WtogD6adFdcMQSs7Iun_gJ39d5dOS455ovj0yHY/exec'; 
 
-        let currentData = []; // 儲存當前 JSON 資料供搜尋使用
+        let currentData = []; // 完整原始資料庫
 
-        // --- 搜尋功能 ---
+        // --- 搜尋功能優化：支援代號與名稱 ---
         const searchInput = document.getElementById('stock-search');
         searchInput.addEventListener('keypress', function (e) {
             if (e.key === 'Enter') {
-                const code = this.value.trim();
-                if (!code) return;
+                const keyword = this.value.trim().toLowerCase();
+                if (!keyword) return;
                 
-                const target = currentData.find(item => item.Code.toString().trim() === code);
+                // 在完整資料中搜尋 (代號完全符合 或 名稱包含關鍵字)
+                const target = currentData.find(item => 
+                    item.Code.toString().trim() === keyword || 
+                    item.Name.toString().toLowerCase().includes(keyword)
+                );
+
                 if (target) {
                     showKLine(target.Code, target.Name);
-                    this.value = ""; // 搜尋完清空
+                    this.value = ""; 
                 } else {
-                    alert("找不到該股票代號，請確認輸入是否正確。");
+                    alert(`找不到 "${keyword}"，請確認輸入是否有誤。`);
                 }
             }
         });
 
-        // --- 輔助工具：計算均線 (MA) ---
         function calculateMA(dayCount, data) {
             let result = [];
             for (let i = 0, len = data.length; i < len; i++) {
-                if (i < dayCount - 1) {
-                    result.push('-');
-                    continue;
-                }
+                if (i < dayCount - 1) { result.push('-'); continue; }
                 let sum = 0;
-                for (let j = 0; j < dayCount; j++) {
-                    sum += data[i - j][1]; 
-                }
+                for (let j = 0; j < dayCount; j++) { sum += data[i - j][1]; }
                 result.push((sum / dayCount).toFixed(2));
             }
             return result;
         }
 
-        // --- 輔助工具：分析 K 線型態 ---
         function analyzeKPattern(item) {
             const [open, close, low, high] = item;
             const body = Math.abs(close - open);
@@ -143,7 +141,7 @@
             document.getElementById('k-line-modal').style.display = 'block';
             document.getElementById('modal-title').innerText = `${name} (${code}) 趨勢分析`;
             kChart.clear();
-            kChart.showLoading({ text: '大數據分析中...', textColor: '#ffca28', maskColor: 'rgba(0,0,0,0)' });
+            kChart.showLoading({ text: '讀取資料庫中...', textColor: '#ffca28', maskColor: 'rgba(0,0,0,0)' });
             try {
                 const response = await fetch(`${GAS_URL}?code=${code}`);
                 const history = await response.json();
@@ -152,14 +150,14 @@
                 kChart.hideLoading();
                 renderKLine(dates, values);
             } catch (err) {
-                kChart.showLoading({ text: '讀取失敗，請確認權限', textColor: '#ff4d4f' });
+                kChart.showLoading({ text: '讀取失敗', textColor: '#ff4d4f' });
             }
         }
 
         function renderKLine(dates, values) {
             const ma5 = calculateMA(5, values);
             const ma20 = calculateMA(20, values);
-            const option = {
+            kChart.setOption({
                 legend: { data: ['日K', 'MA5', 'MA20'], bottom: 10, textStyle: { color: '#ccc' } },
                 tooltip: { 
                     trigger: 'axis', axisPointer: { type: 'cross' },
@@ -182,8 +180,7 @@
                     { name: 'MA5', type: 'line', data: ma5, smooth: true, lineStyle: { opacity: 0.7, color: '#fff' }, symbol: 'none' },
                     { name: 'MA20', type: 'line', data: ma20, smooth: true, lineStyle: { opacity: 0.7, color: '#ffca28' }, symbol: 'none' }
                 ]
-            };
-            kChart.setOption(option, true);
+            }, true);
             kChart.resize();
         }
 
@@ -192,12 +189,15 @@
             try {
                 const response = await fetch(`${BASE_URL}${fileName}?v=${new Date().getTime()}`);
                 const rawData = await response.json();
-                currentData = rawData; // 更新全局變數供搜尋使用
+                
+                // 關鍵：將「所有」API 資料存入 currentData，確保搜尋功能無死角
+                currentData = rawData; 
                 
                 const currentTotalValue = rawData.reduce((acc, cur) => acc + (parseFloat(cur.TradeValue) || 0), 0);
                 document.getElementById('total-volume').innerText = `市場總成交值：約 ${(currentTotalValue / 100000000).toLocaleString(undefined, {maximumFractionDigits: 2})} 億元`;
                 document.getElementById('date-display').innerText = `資料日期：${formatDisplayDate(rawData[0].Date)}`;
 
+                // 畫面上只顯示有成交值的股票 (避免 Treemap 崩潰)
                 const chartData = rawData.filter(item => parseFloat(item.TradeValue) > 0).map(item => {
                     const val = parseFloat(item.TradeValue);
                     const ratio = ((val / currentTotalValue) * 100).toFixed(2);
@@ -214,17 +214,19 @@
                     tooltip: {
                         formatter: info => {
                             const d = info.data.raw;
-                            return `<b>${d.Name} (${d.Code})</b><br/>收盤：${d.ClosingPrice}<br/>漲跌：${d.Change}%<br/>佔比：${d.ratio}%<br/><span style="color:#aaa;font-size:10px">點擊看K線分析</span>`;
+                            return `<b>${d.Name} (${d.Code})</b><br/>收盤：${d.ClosingPrice}<br/>漲跌：${d.Change}%<br/>佔比：${d.ratio}%`;
                         }
                     },
                     series: [{
                         type: 'treemap',
                         data: chartData,
                         breadcrumb: { show: false },
-                        label: { show: true, position: 'inside', formatter: '{b}', fontSize: 12 },
+                        roam: false,
+                        nodeClick: false,
+                        label: { show: true, position: 'inside', formatter: '{b}', fontSize: 11 },
                         itemStyle: { borderColor: '#1a1a1a', borderWidth: 1 }
                     }]
-                });
+                }, true);
                 document.getElementById('loading-overlay').style.display = 'none';
             } catch (err) { console.error(err); }
         }
