@@ -7,18 +7,35 @@
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; color: white; overflow: hidden; font-family: "Microsoft JhengHei", sans-serif; }
-        #header { height: 75px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; background: #222; border-bottom: 1px solid #444; }
-        .title-group { display: flex; flex-direction: column; }
+        
+        #header { 
+            height: 75px; display: flex; align-items: center; justify-content: space-between; 
+            padding: 0 20px; background: #222; border-bottom: 1px solid #444; 
+            box-sizing: border-box;
+        }
+        .title-group { display: flex; flex-direction: column; min-width: 200px; }
         #date-display { font-size: 1.1rem; font-weight: bold; color: #ffca28; }
         #total-volume { font-size: 0.9rem; color: #00e5ff; margin-top: 2px; }
+        
         .action-group { display: flex; align-items: center; gap: 10px; }
         #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 150px; }
         #date-selector { padding: 8px 15px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; cursor: pointer; }
+        
+        /* 修正圖表高度，確保不產生捲軸 */
         #main { width: 100vw; height: calc(100vh - 75px); }
-        #k-line-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90vw; height: 85vh; background: #1e1e1e; border: 1px solid #555; border-radius: 12px; z-index: 100; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
-        #modal-header { padding: 15px 25px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
-        #k-line-chart { width: 100%; height: calc(85vh - 75px); }
+
+        /* 彈窗樣式修正：增加響應式寬高限制 */
+        #k-line-modal {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 90vw; max-width: 1200px; height: 85vh; max-height: 800px;
+            background: #1e1e1e; border: 1px solid #555; border-radius: 12px; z-index: 100; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8); overflow: hidden;
+        }
+        #modal-header { height: 50px; padding: 0 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; box-sizing: border-box; }
+        #k-line-chart { width: 100%; height: calc(100% - 50px); }
         #close-btn { cursor: pointer; font-size: 28px; color: #888; }
+        #close-btn:hover { color: #ff4d4f; }
+        
         #overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99; backdrop-filter: blur(3px); }
         #loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 8px; border: 1px solid #444; display: none; }
     </style>
@@ -34,8 +51,10 @@
             <select id="date-selector"></select>
         </div>
     </div>
+    
     <div id="loading-overlay">資料載入中...</div>
     <div id="main"></div>
+
     <div id="overlay"></div>
     <div id="k-line-modal">
         <div id="modal-header">
@@ -57,9 +76,15 @@
         document.getElementById('stock-search').onkeypress = function(e) {
             if (e.key === 'Enter') {
                 const k = this.value.trim().toLowerCase();
+                if (!k) return;
                 const t = currentData.find(i => i.Code.toString().trim() === k || i.Name.includes(k));
-                if (t) showKLine(t.Code, t.Name);
-                else if (/^\d+$/.test(k)) showKLine(k, "歷史搜尋");
+                if (t) {
+                    showKLine(t.Code, t.Name);
+                    this.value = "";
+                } else if (/^\d+$/.test(k)) {
+                    showKLine(k, "歷史搜尋");
+                    this.value = "";
+                }
             }
         };
 
@@ -75,6 +100,7 @@
             document.getElementById('overlay').style.display = 'block';
             document.getElementById('k-line-modal').style.display = 'block';
             document.getElementById('modal-title').innerText = `${n} (${c}) 歷史 K 線`;
+            kChart.resize(); // 彈窗開啟時重新調整圖表大小防止變形
             kChart.showLoading();
             try {
                 const res = await fetch(`${GAS_URL}?code=${c}`);
@@ -83,7 +109,7 @@
                 kChart.setOption({
                     xAxis: { data: h.map(i => formatDisplayDate(i.date)) },
                     yAxis: { scale: true },
-                    dataZoom: [{ type: 'inside', start: 50, end: 100 }, { type: 'slider' }],
+                    dataZoom: [{ type: 'inside', start: 50, end: 100 }, { type: 'slider', bottom: 10 }],
                     series: [{ type: 'candlestick', data: h.map(i => [i.open, i.close, i.low, i.high]), itemStyle: { color: '#ef5350', color0: '#26a69a' } }]
                 }, true);
             } catch (e) { kChart.showLoading({text: '讀取失敗'}); }
@@ -105,7 +131,6 @@
                     const close = parseFloat(i.ClosingPrice);
                     const diff = parseFloat(i.Change) || 0;
                     const prevClose = close - diff;
-                    // 正確計算漲跌幅百分比
                     const changePercent = prevClose !== 0 ? ((diff / prevClose) * 100).toFixed(2) : 0;
                     const ratio = ((val / totalVal) * 100).toFixed(2);
 
@@ -121,7 +146,8 @@
                     tooltip: {
                         formatter: info => {
                             const d = info.data.raw;
-                            const cColor = parseFloat(d.Change) > 0 ? '#ff4d4f' : (parseFloat(d.Change) < 0 ? '#52c41a' : '#ccc');
+                            const cVal = parseFloat(d.Change);
+                            const cColor = cVal > 0 ? '#ff4d4f' : (cVal < 0 ? '#52c41a' : '#ccc');
                             return `<b>${d.Name} (${d.Code})</b><br/>
                                     收盤價：${d.ClosingPrice}<br/>
                                     漲跌值：<span style="color:${cColor}">${d.Change} 元</span><br/>
@@ -129,7 +155,15 @@
                                     成交佔比：${d.ratio}%`;
                         }
                     },
-                    series: [{ type: 'treemap', data: chartData, breadcrumb: { show: false }, label: { show: true, fontSize: 11 }, itemStyle: { borderColor: '#1a1a1a' } }]
+                    series: [{ 
+                        type: 'treemap', 
+                        data: chartData, 
+                        breadcrumb: { show: false }, 
+                        roam: false,
+                        nodeClick: false,
+                        label: { show: true, fontSize: 11 }, 
+                        itemStyle: { borderColor: '#1a1a1a', borderWidth: 1 } 
+                    }]
                 }, true);
                 document.getElementById('loading-overlay').style.display = 'none';
             } catch (e) { console.error(e); }
@@ -140,6 +174,7 @@
             if (res.ok) {
                 const files = await res.json();
                 const sel = document.getElementById('date-selector');
+                sel.innerHTML = '';
                 files.forEach(f => { const o = document.createElement('option'); o.value = f; o.text = formatDisplayDate(f); sel.appendChild(o); });
                 updateChart(sel.value);
             }
@@ -151,6 +186,7 @@
             document.getElementById('overlay').style.display = 'none';
             document.getElementById('k-line-modal').style.display = 'none';
         };
+        
         window.onresize = () => { myChart.resize(); kChart.resize(); };
         init();
     </script>
