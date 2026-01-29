@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台股成交比重與型態分析看板</title>
+    <title>台股成交比重與趨勢分析看板</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; color: white; overflow: hidden; font-family: "Microsoft JhengHei", sans-serif; }
@@ -21,18 +21,16 @@
         #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 150px; }
         #date-selector { padding: 8px 15px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; cursor: pointer; }
         
-        /* 修正圖表高度，確保不產生捲軸 */
         #main { width: 100vw; height: calc(100vh - 75px); }
 
-        /* 彈窗樣式修正：增加響應式寬高限制 */
         #k-line-modal {
             display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             width: 90vw; max-width: 1200px; height: 85vh; max-height: 800px;
             background: #1e1e1e; border: 1px solid #555; border-radius: 12px; z-index: 100; 
             box-shadow: 0 10px 30px rgba(0,0,0,0.8); overflow: hidden;
         }
-        #modal-header { height: 50px; padding: 0 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; box-sizing: border-box; }
-        #k-line-chart { width: 100%; height: calc(100% - 50px); }
+        #modal-header { height: 60px; padding: 0 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; box-sizing: border-box; }
+        #k-line-chart { width: 100%; height: calc(100% - 60px); }
         #close-btn { cursor: pointer; font-size: 28px; color: #888; }
         #close-btn:hover { color: #ff4d4f; }
         
@@ -58,7 +56,10 @@
     <div id="overlay"></div>
     <div id="k-line-modal">
         <div id="modal-header">
-            <div id="modal-title" style="font-weight:bold; color:#ffca28;"></div>
+            <div id="modal-title" style="display: flex; flex-direction: column;">
+                <span id="stock-info" style="font-weight:bold; color:#ffca28; font-size: 1.1rem;"></span>
+                <span id="ma-status" style="font-size: 0.85rem; margin-top: 2px;"></span>
+            </div>
             <div id="close-btn">&times;</div>
         </div>
         <div id="k-line-chart"></div>
@@ -72,19 +73,26 @@
 
         let currentData = [];
 
+        // MA 計算函式
+        function calculateMA(dayCount, data) {
+            let result = [];
+            for (let i = 0, len = data.length; i < len; i++) {
+                if (i < dayCount - 1) { result.push('-'); continue; }
+                let sum = 0;
+                for (let j = 0; j < dayCount; j++) { sum += data[i - j].close; }
+                result.push(parseFloat((sum / dayCount).toFixed(2)));
+            }
+            return result;
+        }
+
         // 搜尋邏輯
         document.getElementById('stock-search').onkeypress = function(e) {
             if (e.key === 'Enter') {
                 const k = this.value.trim().toLowerCase();
                 if (!k) return;
                 const t = currentData.find(i => i.Code.toString().trim() === k || i.Name.includes(k));
-                if (t) {
-                    showKLine(t.Code, t.Name);
-                    this.value = "";
-                } else if (/^\d+$/.test(k)) {
-                    showKLine(k, "歷史搜尋");
-                    this.value = "";
-                }
+                if (t) { showKLine(t.Code, t.Name); this.value = ""; }
+                else if (/^\d+$/.test(k)) { showKLine(k, "歷史搜尋"); this.value = ""; }
             }
         };
 
@@ -99,18 +107,65 @@
         async function showKLine(c, n) {
             document.getElementById('overlay').style.display = 'block';
             document.getElementById('k-line-modal').style.display = 'block';
-            document.getElementById('modal-title').innerText = `${n} (${c}) 歷史 K 線`;
-            kChart.resize(); // 彈窗開啟時重新調整圖表大小防止變形
+            document.getElementById('stock-info').innerText = `${n} (${c}) 歷史 K 線`;
+            kChart.resize();
             kChart.showLoading();
             try {
                 const res = await fetch(`${GAS_URL}?code=${c}`);
                 const h = await res.json();
                 kChart.hideLoading();
+
+                const ma5 = calculateMA(5, h);
+                const ma20 = calculateMA(20, h);
+                
+                // 判定最新均線狀態
+                const lastIdx = h.length - 1;
+                const lastClose = h[lastIdx].close;
+                const lastMA5 = ma5[lastIdx];
+                const lastMA20 = ma20[lastIdx];
+                let statusText = "均線狀態：計算中...";
+                let statusColor = "#aaa";
+
+                if (lastMA5 !== '-' && lastMA20 !== '-') {
+                    if (lastMA5 > lastMA20 && lastClose > lastMA5) {
+                        statusText = "均線狀態：多頭排列 (強勢)";
+                        statusColor = "#ef5350";
+                    } else if (lastMA5 < lastMA20 && lastClose < lastMA5) {
+                        statusText = "均線狀態：空頭排列 (弱勢)";
+                        statusColor = "#26a69a";
+                    } else {
+                        statusText = "均線狀態：區間整理 / 趨勢不明";
+                        statusColor = "#ffca28";
+                    }
+                }
+                document.getElementById('ma-status').innerText = statusText;
+                document.getElementById('ma-status').style.color = statusColor;
+
                 kChart.setOption({
+                    legend: { data: ['日K', 'MA5', 'MA20'], top: 10, textStyle: { color: '#ccc' } },
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'cross' },
+                        formatter: function(params) {
+                            let res = `<b>${params[0].name}</b><br/>`;
+                            params.forEach(p => {
+                                if (p.seriesName === '日K') {
+                                    res += `開盤: ${p.value[1]} 收盤: ${p.value[2]}<br/>最低: ${p.value[3]} 最高: ${p.value[4]}<br/>`;
+                                } else {
+                                    res += `${p.marker} ${p.seriesName}: ${p.value}<br/>`;
+                                }
+                            });
+                            return res;
+                        }
+                    },
                     xAxis: { data: h.map(i => formatDisplayDate(i.date)) },
                     yAxis: { scale: true },
                     dataZoom: [{ type: 'inside', start: 50, end: 100 }, { type: 'slider', bottom: 10 }],
-                    series: [{ type: 'candlestick', data: h.map(i => [i.open, i.close, i.low, i.high]), itemStyle: { color: '#ef5350', color0: '#26a69a' } }]
+                    series: [
+                        { name: '日K', type: 'candlestick', data: h.map(i => [i.open, i.close, i.low, i.high]), itemStyle: { color: '#ef5350', color0: '#26a69a' } },
+                        { name: 'MA5', type: 'line', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#fff' } },
+                        { name: 'MA20', type: 'line', data: ma20, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ffca28' } }
+                    ]
                 }, true);
             } catch (e) { kChart.showLoading({text: '讀取失敗'}); }
         }
@@ -133,7 +188,6 @@
                     const prevClose = close - diff;
                     const changePercent = prevClose !== 0 ? ((diff / prevClose) * 100).toFixed(2) : 0;
                     const ratio = ((val / totalVal) * 100).toFixed(2);
-
                     return {
                         name: `${i.Name}\n${ratio}%`,
                         value: val,
@@ -146,24 +200,11 @@
                     tooltip: {
                         formatter: info => {
                             const d = info.data.raw;
-                            const cVal = parseFloat(d.Change);
-                            const cColor = cVal > 0 ? '#ff4d4f' : (cVal < 0 ? '#52c41a' : '#ccc');
-                            return `<b>${d.Name} (${d.Code})</b><br/>
-                                    收盤價：${d.ClosingPrice}<br/>
-                                    漲跌值：<span style="color:${cColor}">${d.Change} 元</span><br/>
-                                    漲跌幅：<span style="color:${cColor}">${d.changePercent}%</span><br/>
-                                    成交佔比：${d.ratio}%`;
+                            const cColor = parseFloat(d.Change) > 0 ? '#ff4d4f' : (parseFloat(d.Change) < 0 ? '#52c41a' : '#ccc');
+                            return `<b>${d.Name} (${d.Code})</b><br/>收盤價：${d.ClosingPrice}<br/>漲跌值：<span style="color:${cColor}">${d.Change} 元</span><br/>漲跌幅：<span style="color:${cColor}">${d.changePercent}%</span><br/>成交佔比：${d.ratio}%`;
                         }
                     },
-                    series: [{ 
-                        type: 'treemap', 
-                        data: chartData, 
-                        breadcrumb: { show: false }, 
-                        roam: false,
-                        nodeClick: false,
-                        label: { show: true, fontSize: 11 }, 
-                        itemStyle: { borderColor: '#1a1a1a', borderWidth: 1 } 
-                    }]
+                    series: [{ type: 'treemap', data: chartData, breadcrumb: { show: false }, roam: false, nodeClick: false, label: { show: true, fontSize: 11 }, itemStyle: { borderColor: '#1a1a1a', borderWidth: 1 } }]
                 }, true);
                 document.getElementById('loading-overlay').style.display = 'none';
             } catch (e) { console.error(e); }
@@ -186,7 +227,6 @@
             document.getElementById('overlay').style.display = 'none';
             document.getElementById('k-line-modal').style.display = 'none';
         };
-        
         window.onresize = () => { myChart.resize(); kChart.resize(); };
         init();
     </script>
