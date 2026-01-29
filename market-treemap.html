@@ -45,7 +45,7 @@
             <div id="total-volume">計算中...</div>
         </div>
         <div class="action-group">
-            <input type="text" id="stock-search" placeholder="搜尋代號或名稱">
+            <input type="text" id="stock-search" placeholder="代號或名稱+Enter">
             <select id="date-selector"></select>
         </div>
     </div>
@@ -73,7 +73,6 @@
 
         let currentData = [];
 
-        // MA 計算函式
         function calculateMA(dayCount, data) {
             let result = [];
             for (let i = 0, len = data.length; i < len; i++) {
@@ -85,14 +84,27 @@
             return result;
         }
 
-        // 搜尋邏輯
+        // --- 搜尋邏輯優化 ---
         document.getElementById('stock-search').onkeypress = function(e) {
             if (e.key === 'Enter') {
-                const k = this.value.trim().toLowerCase();
+                const k = this.value.trim().toUpperCase(); // 統一轉大寫以匹配 00635U
                 if (!k) return;
-                const t = currentData.find(i => i.Code.toString().trim() === k || i.Name.includes(k));
-                if (t) { showKLine(t.Code, t.Name); this.value = ""; }
-                else if (/^\d+$/.test(k)) { showKLine(k, "歷史搜尋"); this.value = ""; }
+                
+                // 1. 先從今日清單比對 (代號或名稱)
+                const t = currentData.find(i => 
+                    i.Code.toString().trim().toUpperCase() === k || 
+                    i.Name.includes(this.value.trim())
+                );
+
+                if (t) {
+                    showKLine(t.Code, t.Name);
+                    this.value = "";
+                } else {
+                    // 2. 找不到則直接進行「歷史盲搜」
+                    // 移除原有的數字判斷限制，讓包含字母的代碼也能執行
+                    showKLine(k, "歷史搜尋");
+                    this.value = "";
+                }
             }
         };
 
@@ -113,12 +125,18 @@
             try {
                 const res = await fetch(`${GAS_URL}?code=${c}`);
                 const h = await res.json();
+                
+                // 檢查是否回傳 error (GAS 端處理)
+                if (h.error) {
+                    kChart.showLoading({text: '資料庫無此代號'});
+                    return;
+                }
+
                 kChart.hideLoading();
 
                 const ma5 = calculateMA(5, h);
                 const ma20 = calculateMA(20, h);
                 
-                // 判定最新均線狀態
                 const lastIdx = h.length - 1;
                 const lastClose = h[lastIdx].close;
                 const lastMA5 = ma5[lastIdx];
