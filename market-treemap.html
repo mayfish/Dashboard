@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>股市 Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <style>
+    #main { width: 100%; height: 600px; }
+    body { font-family: sans-serif; background: #1a1a1a; color: white; }
+  </style>
+</head>
+<body>
+  <h2>台股當日表現板塊圖</h2>
+  <div id="main"></div>
+
+  <script>
+    var chartDom = document.getElementById('main');
+    var myChart = echarts.init(chartDom, 'dark');
+
+    // 這裡替換成你 GitHub Pages 上的 JSON 路徑
+    fetch('data/2025-11-25.json') 
+      .then(res => res.json())
+      .then(rawData => {
+        // 格式化資料給 ECharts TreeMap
+        const chartData = rawData.map(item => ({
+          name: `${item.Name}\n${item.ClosingPrice}`,
+          value: Math.abs(parseFloat(item.TradeValue)), // 區塊大小根據成交值
+          itemStyle: {
+            color: parseFloat(item.Change) > 0 ? '#ef5350' : (parseFloat(item.Change) < 0 ? '#26a69a' : '#999')
+          },
+          code: item.Code // 儲存代碼以便跳轉
+        }));
+
+        myChart.setOption({
+          tooltip: { formatter: '{b}<br/>成交值: {c}' },
+          series: [{}]
+        });
+        
+        // 點擊事件：跳轉到歷史曲線
+        myChart.on('click', function (params) {
+          window.location.href = `history.html?code=${params.data.code}`;
+        });
+      });
+  </script>
+</body>
+</html>
