@@ -15,7 +15,7 @@
         
         /* 搜尋與選單區塊 */
         .action-group { display: flex; align-items: center; gap: 10px; }
-        #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 150px; }
+        #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 160px; }
         #stock-search:focus { border-color: #00e5ff; }
         #date-selector { padding: 8px 15px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; cursor: pointer; outline: none; }
         #date-selector:hover { border-color: #ffca28; }
@@ -67,16 +67,16 @@
         const BASE_URL = './data/STOCK_DAY_ALL/';
         const GAS_URL = 'https://script.google.com/macros/s/AKfycbxOQ5-B8JFmkTSZ1SwcUaEzikem-WtogD6adFdcMQSs7Iun_gJ39d5dOS455ovj0yHY/exec'; 
 
-        let currentData = []; // 完整原始資料庫
+        let currentData = []; 
 
-        // --- 搜尋功能優化：支援代號與名稱 ---
+        // --- 搜尋功能：支援當日資料比對與歷史盲搜 ---
         const searchInput = document.getElementById('stock-search');
         searchInput.addEventListener('keypress', function (e) {
             if (e.key === 'Enter') {
                 const keyword = this.value.trim().toLowerCase();
                 if (!keyword) return;
                 
-                // 在完整資料中搜尋 (代號完全符合 或 名稱包含關鍵字)
+                // 1. 優先在當前 JSON 找 (支援代號與名稱)
                 const target = currentData.find(item => 
                     item.Code.toString().trim() === keyword || 
                     item.Name.toString().toLowerCase().includes(keyword)
@@ -85,8 +85,13 @@
                 if (target) {
                     showKLine(target.Code, target.Name);
                     this.value = ""; 
+                } 
+                // 2. 如果 JSON 找不到但輸入的是純數字代號，則「盲搜」GAS 資料庫歷史
+                else if (/^\d+$/.test(keyword)) {
+                    showKLine(keyword, "歷史搜尋");
+                    this.value = "";
                 } else {
-                    alert(`找不到 "${keyword}"，請確認輸入是否有誤。`);
+                    alert(`在今日成交清單中找不到 "${keyword}"。若是今日無交易個股，請輸入完整代號搜尋歷史 K 線。`);
                 }
             }
         });
@@ -139,18 +144,23 @@
         async function showKLine(code, name) {
             document.getElementById('overlay').style.display = 'block';
             document.getElementById('k-line-modal').style.display = 'block';
-            document.getElementById('modal-title').innerText = `${name} (${code}) 趨勢分析`;
+            document.getElementById('modal-title').innerText = `${name} (${code}) 歷史 K 線分析`;
             kChart.clear();
-            kChart.showLoading({ text: '讀取資料庫中...', textColor: '#ffca28', maskColor: 'rgba(0,0,0,0)' });
+            kChart.showLoading({ text: '正在檢索歷史資料庫...', textColor: '#ffca28', maskColor: 'rgba(0,0,0,0)' });
             try {
                 const response = await fetch(`${GAS_URL}?code=${code}`);
                 const history = await response.json();
+                
+                if (history.error) {
+                    throw new Error(history.error);
+                }
+
                 const dates = history.map(h => formatDisplayDate(h.date));
                 const values = history.map(h => [h.open, h.close, h.low, h.high]);
                 kChart.hideLoading();
                 renderKLine(dates, values);
             } catch (err) {
-                kChart.showLoading({ text: '讀取失敗', textColor: '#ff4d4f' });
+                kChart.showLoading({ text: '讀取失敗：' + err.message, textColor: '#ff4d4f' });
             }
         }
 
@@ -189,15 +199,12 @@
             try {
                 const response = await fetch(`${BASE_URL}${fileName}?v=${new Date().getTime()}`);
                 const rawData = await response.json();
-                
-                // 關鍵：將「所有」API 資料存入 currentData，確保搜尋功能無死角
                 currentData = rawData; 
                 
                 const currentTotalValue = rawData.reduce((acc, cur) => acc + (parseFloat(cur.TradeValue) || 0), 0);
                 document.getElementById('total-volume').innerText = `市場總成交值：約 ${(currentTotalValue / 100000000).toLocaleString(undefined, {maximumFractionDigits: 2})} 億元`;
                 document.getElementById('date-display').innerText = `資料日期：${formatDisplayDate(rawData[0].Date)}`;
 
-                // 畫面上只顯示有成交值的股票 (避免 Treemap 崩潰)
                 const chartData = rawData.filter(item => parseFloat(item.TradeValue) > 0).map(item => {
                     const val = parseFloat(item.TradeValue);
                     const ratio = ((val / currentTotalValue) * 100).toFixed(2);
