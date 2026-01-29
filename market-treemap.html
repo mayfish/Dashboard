@@ -6,19 +6,39 @@
     <title>台股市場成交值比重</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; color: white; overflow: hidden; }
-        #header { height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #222; border-bottom: 1px solid #444; }
-        #date-display { font-size: 1.2rem; font-weight: bold; color: #ffca28; }
-        #main { width: 100vw; height: calc(100vh - 60px); }
-        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; color: white; overflow: hidden; font-family: "Microsoft JhengHei", sans-serif; }
+        #header { 
+            height: 70px; display: flex; align-items: center; justify-content: space-between; 
+            padding: 0 20px; background: #222; border-bottom: 1px solid #444; 
+        }
+        .title-group { display: flex; flex-direction: column; }
+        #date-display { font-size: 1.1rem; font-weight: bold; color: #ffca28; }
+        
+        /* 選單樣式優化 */
+        #date-selector { 
+            padding: 8px 15px; background: #333; color: white; border: 1px solid #666; 
+            border-radius: 4px; cursor: pointer; font-size: 14px; outline: none;
+        }
+        #date-selector:hover { border-color: #ffca28; }
+        
+        #main { width: 100vw; height: calc(100vh - 70px); }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 8px; border: 1px solid #444; }
     </style>
 </head>
 <body>
     <div id="header">
-        <div>台股當日表現板塊圖</div>
-        <div id="date-display">讀取中...</div>
+        <div class="title-group">
+            <div style="font-size: 0.8rem; color: #888; margin-bottom: 4px;">台股當日表現板塊圖</div>
+            <div id="date-display">正在初始化...</div>
+        </div>
+        <div>
+            <select id="date-selector">
+                <option value="latest.json">最新資料</option>
+            </select>
+        </div>
     </div>
-    <div id="loading">資料讀取中...</div>
+    
+    <div id="loading">資料載入中...</div>
     <div id="main"></div>
 
     <script>
@@ -26,51 +46,62 @@
         const myChart = echarts.init(chartDom, 'dark');
         const dateDisplay = document.getElementById('date-display');
         const loadingEl = document.getElementById('loading');
+        const dateSelector = document.getElementById('date-selector');
 
-        // 格式化日期：將 1141125 轉為 114/11/25
-        function formatDate(dateStr) {
-            if (!dateStr || dateStr.length < 7) return dateStr;
-            return `${dateStr.substring(0, 3)}/${dateStr.substring(3, 5)}/${dateStr.substring(5, 7)}`;
+        const BASE_URL = './data/STOCK_DAY_ALL/';
+
+        // 格式化日期：將 民國(1141125) 或 西元(2026-01-29) 轉為顯示字串
+        function formatDisplayDate(str) {
+            if (!str) return '';
+            const clean = str.replace('.json', '');
+            if (clean === 'latest') return '最新資料';
+            // 如果是 2026-01-29 格式
+            if (clean.includes('-')) {
+                const parts = clean.split('-');
+                return `${parseInt(parts[0]) - 1911}/${parts[1]}/${parts[2]}`;
+            }
+            // 如果是 1141125 格式
+            if (clean.length >= 7) {
+                return `${clean.substring(0, 3)}/${clean.substring(3, 5)}/${clean.substring(5, 7)}`;
+            }
+            return clean;
         }
 
-        // 直接載入並顯示資料
-        fetch('./data/STOCK_DAY_ALL/latest.json')
-            .then(res => res.json())
-            .then(rawData => {
-                loadingEl.style.display = 'none';
-                
-                // 1. 顯示日期 (取第一筆資料的 Date 欄位)
+        // 核心渲染函式
+        async function updateChart(fileName) {
+            loadingEl.style.display = 'block';
+            try {
+                const response = await fetch(`${BASE_URL}${fileName}?v=${new Date().getTime()}`);
+                if (!response.ok) throw new Error('檔案讀取失敗');
+                const rawData = await response.json();
+
                 if (rawData.length > 0) {
-                    dateDisplay.innerText = `資料日期：${formatDate(rawData[0].Date)}`;
+                    dateDisplay.innerText = `資料日期：${formatDisplayDate(rawData[0].Date)}`;
                 }
 
-                // 2. 轉換資料：直接將所有股票作為第一層節點
                 const chartData = rawData
-                    .filter(item => parseFloat(item.TradeValue) > 0) // 過濾掉無成交量的
+                    .filter(item => parseFloat(item.TradeValue) > 0)
                     .map(item => {
-                        const change = parseFloat(item.Change);
-                        // 判斷顏色：漲(紅)、跌(綠)、平(灰)
+                        const change = parseFloat(item.Change) || 0;
                         let color = '#999';
                         if (change > 0) color = '#ef5350';
                         else if (change < 0) color = '#26a69a';
 
                         return {
-                            name: `${item.Name}\n${item.ClosingPrice}`,
+                            name: `${item.Name}\n${item.ClosingPrice || item.Close}`,
                             value: parseFloat(item.TradeValue),
                             itemStyle: { color: color },
-                            // 儲存原始資料供 Tooltip 使用
                             raw: item
                         };
                     });
 
-                const option = {
-                    backgroundColor: '#1a1a1a',
+                myChart.setOption({
                     tooltip: {
                         formatter: function (info) {
                             const d = info.data.raw;
                             return `
-                                <div style="font-weight:bold; border-bottom:1px solid #fff; margin-bottom:5px;">${d.Name} (${d.Code})</div>
-                                成交價：${d.ClosingPrice}<br/>
+                                <div style="font-weight:bold; border-bottom:1px solid #666; margin-bottom:5px; padding-bottom:5px;">${d.Name} (${d.Code})</div>
+                                成交價：${d.ClosingPrice || d.Close}<br/>
                                 漲跌額：${d.Change}<br/>
                                 成交金額：${(parseFloat(d.TradeValue) / 100000000).toFixed(2)} 億
                             `;
@@ -79,34 +110,50 @@
                     series: [{
                         type: 'treemap',
                         data: chartData,
-                        roam: false, // 禁用縮放平移，直接看全貌
-                        nodeClick: false, // 禁用點擊下鑽
-                        breadcrumb: { show: false }, // 隱藏底部路徑
-                        label: {
-                            show: true,
-                            position: 'inside',
-                            formatter: '{b}',
-                            fontSize: 12
-                        },
-                        itemStyle: {
-                            borderColor: '#1a1a1a',
-                            borderWidth: 1,
-                            gapWidth: 1
-                        },
-                        levels: [
-                            { itemStyle: { gapWidth: 1 } }
-                        ]
+                        roam: false,
+                        nodeClick: false,
+                        breadcrumb: { show: false },
+                        label: { show: true, position: 'inside', formatter: '{b}', fontSize: 12 },
+                        itemStyle: { borderColor: '#1a1a1a', borderWidth: 1, gapWidth: 1 }
                     }]
-                };
+                }, true); // 使用 true 強制清理舊圖形
 
-                myChart.setOption(option);
-            })
-            .catch(err => {
-                loadingEl.innerText = '讀取失敗，請檢查資料路徑。';
+                loadingEl.style.display = 'none';
+            } catch (err) {
+                loadingEl.innerText = '錯誤: ' + err.message;
                 console.error(err);
-            });
+            }
+        }
 
-        window.addEventListener('resize', myChart.resize);
+        // 初始化流程
+        async function init() {
+            try {
+                // 1. 抓取 GAS 生成的清單
+                const listRes = await fetch(`${BASE_URL}filelist.json?v=${new Date().getTime()}`);
+                if (listRes.ok) {
+                    const files = await listRes.json();
+                    dateSelector.innerHTML = ''; // 清空靜態預設值
+                    
+                    files.forEach(file => {
+                        const opt = document.createElement('option');
+                        opt.value = file;
+                        opt.text = formatDisplayDate(file);
+                        dateSelector.appendChild(opt);
+                    });
+                }
+            } catch (e) {
+                console.warn("無法取得 filelist.json，使用預設值");
+            }
+
+            // 2. 載入選單第一個項目
+            updateChart(dateSelector.value);
+        }
+
+        // 事件監聽
+        dateSelector.addEventListener('change', (e) => updateChart(e.target.value));
+        window.addEventListener('resize', () => myChart.resize());
+
+        init();
     </script>
 </body>
 </html>
