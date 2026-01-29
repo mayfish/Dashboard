@@ -12,29 +12,29 @@
         #date-display { font-size: 1.1rem; font-weight: bold; color: #ffca28; }
         #total-volume { font-size: 0.9rem; color: #00e5ff; margin-top: 2px; }
         .action-group { display: flex; align-items: center; gap: 10px; }
-        #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 160px; }
+        #stock-search { padding: 8px 12px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; outline: none; width: 150px; }
         #date-selector { padding: 8px 15px; background: #333; color: white; border: 1px solid #666; border-radius: 4px; cursor: pointer; }
         #main { width: 100vw; height: calc(100vh - 75px); }
-        #k-line-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90vw; height: 85vh; background: #1e1e1e; border: 1px solid #555; border-radius: 12px; z-index: 100; }
-        #modal-header { padding: 15px 25px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; }
+        #k-line-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90vw; height: 85vh; background: #1e1e1e; border: 1px solid #555; border-radius: 12px; z-index: 100; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+        #modal-header { padding: 15px 25px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
         #k-line-chart { width: 100%; height: calc(85vh - 75px); }
         #close-btn { cursor: pointer; font-size: 28px; color: #888; }
         #overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99; backdrop-filter: blur(3px); }
-        #loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; display: none; }
+        #loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 8px; border: 1px solid #444; display: none; }
     </style>
 </head>
 <body>
     <div id="header">
         <div class="title-group">
-            <div id="date-display">正在讀取...</div>
-            <div id="total-volume">計算佔比中...</div>
+            <div id="date-display">讀取中...</div>
+            <div id="total-volume">計算中...</div>
         </div>
         <div class="action-group">
             <input type="text" id="stock-search" placeholder="搜尋代號或名稱">
-            <select id="date-selector"><option value="latest.json">最新資料</option></select>
+            <select id="date-selector"></select>
         </div>
     </div>
-    <div id="loading-overlay">載入中...</div>
+    <div id="loading-overlay">資料載入中...</div>
     <div id="main"></div>
     <div id="overlay"></div>
     <div id="k-line-modal">
@@ -51,94 +51,69 @@
         const BASE_URL = './data/STOCK_DAY_ALL/';
         const GAS_URL = 'https://script.google.com/macros/s/AKfycbxOQ5-B8JFmkTSZ1SwcUaEzikem-WtogD6adFdcMQSs7Iun_gJ39d5dOS455ovj0yHY/exec'; 
 
-        let currentData = []; 
+        let currentData = [];
 
-        const searchInput = document.getElementById('stock-search');
-        searchInput.addEventListener('keypress', function (e) {
+        // 搜尋邏輯
+        document.getElementById('stock-search').onkeypress = function(e) {
             if (e.key === 'Enter') {
-                const keyword = this.value.trim().toLowerCase();
-                const target = currentData.find(item => item.Code.toString().trim() === keyword || item.Name.includes(keyword));
-                if (target) { showKLine(target.Code, target.Name); this.value = ""; }
-                else if (/^\d+$/.test(keyword)) { showKLine(keyword, "歷史搜尋"); this.value = ""; }
+                const k = this.value.trim().toLowerCase();
+                const t = currentData.find(i => i.Code.toString().trim() === k || i.Name.includes(k));
+                if (t) showKLine(t.Code, t.Name);
+                else if (/^\d+$/.test(k)) showKLine(k, "歷史搜尋");
             }
-        });
+        };
 
-        function analyzeKPattern(item) {
-            const [open, close, low, high] = item;
-            const body = Math.abs(close - open);
-            const totalRange = high - low;
-            if (totalRange === 0) return "平盤";
-            const upperShadow = high - Math.max(open, close);
-            const lowerShadow = Math.min(open, close) - low;
-            if (body / totalRange < 0.1) return "十字星";
-            if (lowerShadow > body * 2 && upperShadow < body) return "錘子線";
-            const isRed = close > open;
-            if (body / totalRange > 0.7) return isRed ? "長紅" : "長黑";
-            return isRed ? "小紅" : "小綠";
+        function formatDisplayDate(s) {
+            if (!s) return '';
+            const c = s.toString().replace('.json', '');
+            if (c.includes('-')) { const p = c.split('-'); return `${p[0]-1911}/${p[1]}/${p[2]}`; }
+            if (c.length >= 7) return `${c.substring(0,3)}/${c.substring(3,5)}/${c.substring(5,7)}`;
+            return c;
         }
 
-        function formatDisplayDate(str) {
-            if (!str) return '';
-            const clean = str.toString().replace('.json', '');
-            if (clean.includes('-')) {
-                const p = clean.split('-');
-                return `${parseInt(p[0]) - 1911}/${p[1]}/${p[2]}`;
-            }
-            if (clean.length >= 7) return `${clean.substring(0, 3)}/${clean.substring(3, 5)}/${clean.substring(5, 7)}`;
-            return clean;
-        }
-
-        async function showKLine(code, name) {
+        async function showKLine(c, n) {
             document.getElementById('overlay').style.display = 'block';
             document.getElementById('k-line-modal').style.display = 'block';
-            document.getElementById('modal-title').innerText = `${name} (${code}) 趨勢分析`;
+            document.getElementById('modal-title').innerText = `${n} (${c}) 歷史 K 線`;
             kChart.showLoading();
             try {
-                const res = await fetch(`${GAS_URL}?code=${code}`);
-                const history = await res.json();
-                const dates = history.map(h => formatDisplayDate(h.date));
-                const values = history.map(h => [h.open, h.close, h.low, h.high]);
+                const res = await fetch(`${GAS_URL}?code=${c}`);
+                const h = await res.json();
                 kChart.hideLoading();
-                renderKLine(dates, values);
-            } catch (err) { kChart.showLoading({text: '讀取失敗'}); }
+                kChart.setOption({
+                    xAxis: { data: h.map(i => formatDisplayDate(i.date)) },
+                    yAxis: { scale: true },
+                    dataZoom: [{ type: 'inside', start: 50, end: 100 }, { type: 'slider' }],
+                    series: [{ type: 'candlestick', data: h.map(i => [i.open, i.close, i.low, i.high]), itemStyle: { color: '#ef5350', color0: '#26a69a' } }]
+                }, true);
+            } catch (e) { kChart.showLoading({text: '讀取失敗'}); }
         }
 
-        function renderKLine(dates, values) {
-            kChart.setOption({
-                tooltip: { 
-                    trigger: 'axis', 
-                    formatter: (params) => {
-                        let k = params.find(p => p.seriesName === '日K');
-                        return `<b>${k.name}</b> ${analyzeKPattern(k.value.slice(1))}<br/>開:${k.value[1]} 收:${k.value[2]}<br/>低:${k.value[3]} 高:${k.value[4]}`;
-                    }
-                },
-                xAxis: { data: dates },
-                yAxis: { scale: true },
-                series: [{ name: '日K', type: 'candlestick', data: values, itemStyle: { color: '#ef5350', color0: '#26a69a' } }]
-            }, true);
-        }
-
-        async function updateChart(fileName) {
+        async function updateChart(file) {
             document.getElementById('loading-overlay').style.display = 'block';
             try {
-                const res = await fetch(`${BASE_URL}${fileName}?v=${new Date().getTime()}`);
-                const rawData = await res.json();
-                currentData = rawData;
-                
-                const totalVal = rawData.reduce((acc, cur) => acc + (parseFloat(cur.TradeValue) || 0), 0);
-                document.getElementById('total-volume').innerText = `市場總成交值：${(totalVal / 100000000).toFixed(2)} 億元`;
-                document.getElementById('date-display').innerText = `資料日期：${formatDisplayDate(rawData[0].Date)}`;
+                const res = await fetch(`${BASE_URL}${file}?v=${Date.now()}`);
+                const raw = await res.json();
+                currentData = raw;
 
-                const chartData = rawData.filter(item => parseFloat(item.TradeValue) > 0).map(item => {
-                    const val = parseFloat(item.TradeValue);
+                const totalVal = raw.reduce((a, b) => a + (parseFloat(b.TradeValue) || 0), 0);
+                document.getElementById('total-volume').innerText = `市場總成交值：約 ${(totalVal / 100000000).toFixed(2)} 億元`;
+                document.getElementById('date-display').innerText = `資料日期：${formatDisplayDate(raw[0].Date)}`;
+
+                const chartData = raw.filter(i => parseFloat(i.TradeValue) > 0).map(i => {
+                    const val = parseFloat(i.TradeValue);
+                    const close = parseFloat(i.ClosingPrice);
+                    const diff = parseFloat(i.Change) || 0;
+                    const prevClose = close - diff;
+                    // 正確計算漲跌幅百分比
+                    const changePercent = prevClose !== 0 ? ((diff / prevClose) * 100).toFixed(2) : 0;
                     const ratio = ((val / totalVal) * 100).toFixed(2);
-                    const change = parseFloat(item.Change) || 0; // 這裡是百分比
-                    
+
                     return {
-                        name: `${item.Name}\n${ratio}%`,
+                        name: `${i.Name}\n${ratio}%`,
                         value: val,
-                        itemStyle: { color: change > 0 ? '#ef5350' : (change < 0 ? '#26a69a' : '#999') },
-                        raw: { ...item, ratio }
+                        itemStyle: { color: diff > 0 ? '#ef5350' : (diff < 0 ? '#26a69a' : '#999') },
+                        raw: { ...i, ratio, changePercent }
                     };
                 });
 
@@ -146,40 +121,28 @@
                     tooltip: {
                         formatter: info => {
                             const d = info.data.raw;
-                            // 這裡確保顯示的是 d.Change 並加上 % 符號
-                            const changeVal = parseFloat(d.Change);
-                            const changeColor = changeVal > 0 ? '#ff4d4f' : (changeVal < 0 ? '#52c41a' : '#ccc');
-                            return `<div style="font-weight:bold; border-bottom:1px solid #666; margin-bottom:5px;">${d.Name} (${d.Code})</div>
-                                    收盤：${d.ClosingPrice}<br/>
-                                    漲跌幅：<span style="color:${changeColor}">${d.Change}%</span><br/>
-                                    佔比：${d.ratio}%`;
+                            const cColor = parseFloat(d.Change) > 0 ? '#ff4d4f' : (parseFloat(d.Change) < 0 ? '#52c41a' : '#ccc');
+                            return `<b>${d.Name} (${d.Code})</b><br/>
+                                    收盤價：${d.ClosingPrice}<br/>
+                                    漲跌值：<span style="color:${cColor}">${d.Change} 元</span><br/>
+                                    漲跌幅：<span style="color:${cColor}">${d.changePercent}%</span><br/>
+                                    成交佔比：${d.ratio}%`;
                         }
                     },
-                    series: [{
-                        type: 'treemap',
-                        data: chartData,
-                        breadcrumb: { show: false },
-                        label: { show: true, formatter: '{b}', fontSize: 11 },
-                        itemStyle: { borderColor: '#1a1a1a', borderWidth: 1 }
-                    }]
+                    series: [{ type: 'treemap', data: chartData, breadcrumb: { show: false }, label: { show: true, fontSize: 11 }, itemStyle: { borderColor: '#1a1a1a' } }]
                 }, true);
                 document.getElementById('loading-overlay').style.display = 'none';
-            } catch (err) { console.error(err); }
+            } catch (e) { console.error(e); }
         }
 
         async function init() {
-            const listRes = await fetch(`${BASE_URL}filelist.json?v=${new Date().getTime()}`);
-            if (listRes.ok) {
-                const files = await listRes.json();
+            const res = await fetch(`${BASE_URL}filelist.json?v=${Date.now()}`);
+            if (res.ok) {
+                const files = await res.json();
                 const sel = document.getElementById('date-selector');
-                sel.innerHTML = '';
-                files.forEach(f => {
-                    const opt = document.createElement('option');
-                    opt.value = f; opt.text = formatDisplayDate(f);
-                    sel.appendChild(opt);
-                });
+                files.forEach(f => { const o = document.createElement('option'); o.value = f; o.text = formatDisplayDate(f); sel.appendChild(o); });
+                updateChart(sel.value);
             }
-            updateChart(document.getElementById('date-selector').value);
         }
 
         myChart.on('click', p => p.data && p.data.raw && showKLine(p.data.raw.Code, p.data.raw.Name));
