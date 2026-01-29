@@ -3,105 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台股市場成交值比重 - Treemap</title>
+    <title>台股市場成交值比重</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
-        /* 必須給容器明確的高度 */
-        #main { width: 100vw; height: 100vh; }
-        #loading {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            font-family: sans-serif; font-size: 20px; color: #666;
-        }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1a1a1a; color: white; overflow: hidden; }
+        #header { height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #222; border-bottom: 1px solid #444; }
+        #date-display { font-size: 1.2rem; font-weight: bold; color: #ffca28; }
+        #main { width: 100vw; height: calc(100vh - 60px); }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; }
     </style>
 </head>
 <body>
+    <div id="header">
+        <div>台股當日表現板塊圖</div>
+        <div id="date-display">讀取中...</div>
+    </div>
     <div id="loading">資料讀取中...</div>
     <div id="main"></div>
 
     <script>
         const chartDom = document.getElementById('main');
-        const myChart = echarts.init(chartDom);
+        const myChart = echarts.init(chartDom, 'dark');
+        const dateDisplay = document.getElementById('date-display');
         const loadingEl = document.getElementById('loading');
 
-        // 格式化資料：將扁平陣列轉為 ECharts 樹狀結構
-        function formatData(rawData) {
-            // 我們以「產業別」作為分類基準
-            const categories = {};
-            
-            rawData.forEach(item => {
-                const cat = item.Industry || '其他';
-                if (!categories[cat]) {
-                    categories[cat] = { name: cat, children: [] };
-                }
-                
-                // 計算漲跌顏色
-                const change = parseFloat(item.Change);
-                const color = change > 0 ? '#ff4d4f' : (change < 0 ? '#52c41a' : '#bfbfbf');
-
-                categories[cat].children.push({
-                    name: `${item.Name}\n${item.Code}`,
-                    value: parseFloat(item.TradeValue) || 0, // 以成交值決定方塊大小
-                    itemStyle: { color: color },
-                    // 自定義標籤內容
-                    label: { show: true },
-                    // 放入原始資料供 Tooltip 使用
-                    raw: item 
-                });
-            });
-
-            return Object.values(categories);
+        // 格式化日期：將 1141125 轉為 114/11/25
+        function formatDate(dateStr) {
+            if (!dateStr || dateStr.length < 7) return dateStr;
+            return `${dateStr.substring(0, 3)}/${dateStr.substring(3, 5)}/${dateStr.substring(5, 7)}`;
         }
 
-        // 獲取資料
-        // 注意：請確保路徑與 GitHub 上的資料夾結構一致
+        // 直接載入並顯示資料
         fetch('./data/STOCK_DAY_ALL/latest.json')
-            .then(response => {
-                if (!response.ok) throw new Error('找不到資料檔案');
-                return response.json();
-            })
-            .then(data => {
+            .then(res => res.json())
+            .then(rawData => {
                 loadingEl.style.display = 'none';
-                const chartData = formatData(data);
+                
+                // 1. 顯示日期 (取第一筆資料的 Date 欄位)
+                if (rawData.length > 0) {
+                    dateDisplay.innerText = `資料日期：${formatDate(rawData[0].Date)}`;
+                }
+
+                // 2. 轉換資料：直接將所有股票作為第一層節點
+                const chartData = rawData
+                    .filter(item => parseFloat(item.TradeValue) > 0) // 過濾掉無成交量的
+                    .map(item => {
+                        const change = parseFloat(item.Change);
+                        // 判斷顏色：漲(紅)、跌(綠)、平(灰)
+                        let color = '#999';
+                        if (change > 0) color = '#ef5350';
+                        else if (change < 0) color = '#26a69a';
+
+                        return {
+                            name: `${item.Name}\n${item.ClosingPrice}`,
+                            value: parseFloat(item.TradeValue),
+                            itemStyle: { color: color },
+                            // 儲存原始資料供 Tooltip 使用
+                            raw: item
+                        };
+                    });
 
                 const option = {
-                    title: { text: '台股成交值分布圖 (顏色代表漲跌)', left: 'center', top: 10 },
+                    backgroundColor: '#1a1a1a',
                     tooltip: {
                         formatter: function (info) {
                             const d = info.data.raw;
-                            if (!d) return info.name;
                             return `
-                                <div style="font-weight:bold">${d.Name} (${d.Code})</div>
-                                產業：${d.Industry}<br/>
-                                成交值：${(d.TradeValue / 100000000).toFixed(2)} 億<br/>
-                                成交價：${d.Close}<br/>
-                                漲跌幅：<span style="color:${d.Change > 0 ? 'red' : 'green'}">${d.Change}%</span>
+                                <div style="font-weight:bold; border-bottom:1px solid #fff; margin-bottom:5px;">${d.Name} (${d.Code})</div>
+                                成交價：${d.ClosingPrice}<br/>
+                                漲跌額：${d.Change}<br/>
+                                成交金額：${(parseFloat(d.TradeValue) / 100000000).toFixed(2)} 億
                             `;
                         }
                     },
                     series: [{
                         type: 'treemap',
                         data: chartData,
-                        leafDepth: 1, // 點擊可下鑽一層
-                        levels: [
-                            { itemStyle: { borderColor: '#fff', borderWidth: 2, gapWidth: 2 } },
-                            { itemStyle: { borderColor: '#eee', borderWidth: 1, gapWidth: 1 } }
-                        ],
+                        roam: false, // 禁用縮放平移，直接看全貌
+                        nodeClick: false, // 禁用點擊下鑽
+                        breadcrumb: { show: false }, // 隱藏底部路徑
                         label: {
                             show: true,
-                            formatter: '{b}'
-                        }
+                            position: 'inside',
+                            formatter: '{b}',
+                            fontSize: 12
+                        },
+                        itemStyle: {
+                            borderColor: '#1a1a1a',
+                            borderWidth: 1,
+                            gapWidth: 1
+                        },
+                        levels: [
+                            { itemStyle: { gapWidth: 1 } }
+                        ]
                     }]
                 };
 
                 myChart.setOption(option);
             })
             .catch(err => {
-                loadingEl.innerText = '讀取失敗: ' + err.message;
+                loadingEl.innerText = '讀取失敗，請檢查資料路徑。';
                 console.error(err);
             });
 
-        // 隨視窗大小縮放
         window.addEventListener('resize', myChart.resize);
     </script>
 </body>
