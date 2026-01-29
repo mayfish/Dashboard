@@ -18,7 +18,7 @@
     var myChart = echarts.init(chartDom, 'dark');
 
     // 這裡替換成你 GitHub Pages 上的 JSON 路徑
-    fetch('data/latest.json') 
+    fetch('data/STOCK_DAY_ALL/latest.json') 
       .then(res => res.json())
       .then(rawData => {
         // 格式化資料給 ECharts TreeMap
