@@ -136,6 +136,8 @@
 
                 const ma5 = calculateMA(5, h);
                 const ma20 = calculateMA(20, h);
+                const ma60 = calculateMA(60, h);
+                const ma120 = calculateMA(120, h);
                 
                 const lastIdx = h.length - 1;
                 const lastClose = h[lastIdx].close;
@@ -160,7 +162,7 @@
                 document.getElementById('ma-status').style.color = statusColor;
 
                 kChart.setOption({
-                    legend: { data: ['日K', 'MA5', 'MA20'], top: 10, textStyle: { color: '#ccc' } },
+                    legend: { data: ['日K', 'MA5', 'MA20', 'MA60', 'MA120', '成交量'], top: 10, textStyle: { color: '#ccc' } },
                     tooltip: {
                         trigger: 'axis',
                         axisPointer: { type: 'cross' },
@@ -169,6 +171,8 @@
                             params.forEach(p => {
                                 if (p.seriesName === '日K') {
                                     res += `開盤: ${p.value[1]} 收盤: ${p.value[2]}<br/>最低: ${p.value[3]} 最高: ${p.value[4]}<br/>`;
+                                } else if (p.seriesName === '成交量') {
+                                    res += `${p.marker} ${p.seriesName}: ${p.value}<br/>`;
                                 } else {
                                     res += `${p.marker} ${p.seriesName}: ${p.value}<br/>`;
                                 }
@@ -176,13 +180,46 @@
                             return res;
                         }
                     },
-                    xAxis: { data: h.map(i => formatDisplayDate(i.date)) },
-                    yAxis: { scale: true },
-                    dataZoom: [{ type: 'inside', start: 50, end: 100 }, { type: 'slider', bottom: 10 }],
+                    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+                    grid: [
+                        { left: '8%', right: '8%', top: '10%', height: '55%' },
+                        { left: '8%', right: '8%', top: '70%', height: '15%' }
+                    ],
+                    xAxis: [
+                        { type: 'category', data: h.map(i => formatDisplayDate(i.date)), scale: true, boundaryGap: true, axisLine: { onZero: false } },
+                        { type: 'category', gridIndex: 1, data: h.map(i => formatDisplayDate(i.date)), axisLabel: { show: false }, axisTick: { show: false }, boundaryGap: true, axisLine: { onZero: false } }
+                    ],
+                    yAxis: [
+                        { scale: true, splitArea: { show: true } },
+                        { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false } }
+                    ],
+                    dataZoom: [
+                        { type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 },
+                        { type: 'slider', xAxisIndex: [0, 1], bottom: 10 }
+                    ],
                     series: [
                         { name: '日K', type: 'candlestick', data: h.map(i => [i.open, i.close, i.low, i.high]), itemStyle: { color: '#ef5350', color0: '#26a69a' } },
                         { name: 'MA5', type: 'line', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#fff' } },
-                        { name: 'MA20', type: 'line', data: ma20, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ffca28' } }
+                        { name: 'MA20', type: 'line', data: ma20, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ffca28' } },
+                        { name: 'MA60', type: 'line', data: ma60, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#29b6f6' } },
+                        { name: 'MA120', type: 'line', data: ma120, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#ab47bc' } },
+                        { 
+                            name: '成交量', 
+                            type: 'bar', 
+                            xAxisIndex: 1, 
+                            yAxisIndex: 1, 
+                            data: h.map((i, idx) => {
+                                let color = '#999';
+                                if (i.close > i.open) color = '#ef5350';
+                                else if (i.close < i.open) color = '#26a69a';
+                                else if (idx > 0 && i.close > h[idx-1].close) color = '#ef5350';
+                                else if (idx > 0 && i.close < h[idx-1].close) color = '#26a69a';
+                                return { 
+                                    value: i.volume || i.vol || i.Trading_Volume || i.TradeVolume || 0, 
+                                    itemStyle: { color: color } 
+                                };
+                            }) 
+                        }
                     ]
                 }, true);
             } catch (e) { kChart.showLoading({text: '讀取失敗'}); }
